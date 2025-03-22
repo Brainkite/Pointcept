@@ -1,8 +1,11 @@
 _base_ = ["../_base_/default_runtime.py"]
 
+
 # misc custom setting
-batch_size = 12  # bs: total bs in all gpus
-num_worker = 24
+batch_size = 4  # bs: total bs in all gpus
+batch_size_val = 8  # auto adapt to bs 1 for each gpu
+batch_size_test = 8
+num_worker = 16
 mix_prob = 0.8
 empty_cache = False
 enable_amp = True
@@ -52,7 +55,8 @@ model = dict(
 )
 
 # scheduler settings
-epoch = 3000
+epoch = 1600
+eval_epoch = 800
 optimizer = dict(type="AdamW", lr=0.006, weight_decay=0.05)
 scheduler = dict(
     type="OneCycleLR",
@@ -88,7 +92,7 @@ data = dict(
     ],
     train=dict(
         type=dataset_type,
-        split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_6"),
+        split=("Area_1", "Area_2", "Area_3", "Area_4", "Area_5"),
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
@@ -132,7 +136,7 @@ data = dict(
     ),
     val=dict(
         type=dataset_type,
-        split="Area_5",
+        split="Area_6",
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),
@@ -167,7 +171,7 @@ data = dict(
     ),
     test=dict(
         type=dataset_type,
-        split="Area_5",
+        split="Area_6",
         data_root=data_root,
         transform=[
             dict(type="CenterShift", apply_z=True),

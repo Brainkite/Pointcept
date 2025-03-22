@@ -32,6 +32,7 @@ hooks = [
     dict(type="SemSegEvaluator"),
     dict(type="CheckpointSaver", save_freq=None),
     dict(type="PreciseEvaluator", test_last=False),
+    dict(type="WandbHook", project_name="pointcept"),
 ]
 
 # Trainer

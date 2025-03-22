@@ -514,3 +514,95 @@ class GarbageHandler(HookBase):
     def after_train(self):
         gc.collect()
         torch.cuda.empty_cache()
+
+
+@HOOKS.register_module()
+class WandbHook(HookBase):
+    def __init__(self, project_name="pointcept"):
+        self.project_name = project_name
+
+    def _filter_config(self):
+        """Only include configs that are explicitly defined in default_runtime.py and experiment config."""
+        # These are the keys that are typically defined in default_runtime.py and experiment configs
+        base_config_keys = {
+            # From default_runtime.py
+            "weight", "resume", "evaluate", "test_only", "seed", "save_path",
+            "num_worker", "batch_size", "batch_size_val", "batch_size_test",
+            "epoch", "eval_epoch", "clip_grad", "sync_bn", "enable_amp",
+            "amp_dtype", "empty_cache", "empty_cache_per_epoch",
+            "find_unused_parameters", "mix_prob", "param_dicts",
+            # From experiment config (semseg-pt-v3m1-0-base.py)
+            "model", "optimizer", "scheduler", "dataset_type", "data_root", "data",
+            "hooks", "train", "test"
+        }
+        
+        config_dict = self.trainer.cfg.to_dict()
+        filtered_config = {}
+        
+        for key in base_config_keys:
+            if key in config_dict:
+                filtered_config[key] = config_dict[key]
+                
+        return filtered_config
+
+    def before_train(self):
+        import wandb
+        if comm.is_main_process():
+            # Initialize wandb
+            wandb.init(
+                project=self.project_name,
+                config=self._filter_config(),
+            )
+
+    def after_step(self):
+        import wandb
+        if comm.is_main_process() and "model_output_dict" in self.trainer.comm_info:
+            # Calculate global step
+            global_step = self.trainer.epoch * len(self.trainer.train_loader) + self.trainer.comm_info["iter"]
+            
+            # Log training metrics
+            metrics = {
+                "train/loss": self.trainer.comm_info["model_output_dict"]["loss"].item(),
+                "train/lr": self.trainer.optimizer.param_groups[0]["lr"],
+            }
+            wandb.log(metrics, step=global_step)
+
+    def after_epoch(self):
+        import wandb
+        if comm.is_main_process():
+            # Get validation metrics from storage
+            metrics = {}
+            
+            # These metrics are logged by SemSegEvaluator
+            val_metrics = {
+                "val/loss": self.trainer.storage.history("val_loss").avg,
+                "val/mIoU": self.trainer.storage.history("val_intersection").total.mean() / 
+                           (self.trainer.storage.history("val_union").total.mean() + 1e-10),
+                "val/mAcc": self.trainer.storage.history("val_intersection").total.mean() / 
+                           (self.trainer.storage.history("val_target").total.mean() + 1e-10),
+                "val/allAcc": self.trainer.storage.history("val_intersection").total.sum() / 
+                             (self.trainer.storage.history("val_target").total.sum() + 1e-10),
+            }
+            metrics.update(val_metrics)
+            
+            # Calculate global step for consistent logging
+            global_step = (self.trainer.epoch + 1) * len(self.trainer.train_loader)
+            wandb.log(metrics, step=global_step)
+
+    def after_train(self):
+        import wandb
+        if comm.is_main_process():
+            # Upload best model checkpoint
+            best_model_path = os.path.join(
+                self.trainer.cfg.save_path, "model", "model_best.pth"
+            )
+            if os.path.exists(best_model_path):
+                artifact = wandb.Artifact(
+                    name=f"model-{wandb.run.id}", 
+                    type="model",
+                    description="Best model checkpoint"
+                )
+                artifact.add_file(best_model_path)
+                wandb.log_artifact(artifact)
+            
+            wandb.finish()
