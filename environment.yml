@@ -1,7 +1,7 @@
 name: pointcept
 channels:
   - pytorch
-  - nvidia/label/cuda-12.4.1
+  - nvidia/label/cuda-12.4.0
   - nvidia
   - bioconda
   - conda-forge
