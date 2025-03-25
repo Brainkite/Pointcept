@@ -23,6 +23,7 @@ from pointcept.utils.timer import Timer
 from pointcept.utils.comm import is_main_process, synchronize
 from pointcept.utils.cache import shared_dict
 from pointcept.utils.scheduler import CosineScheduler
+from pointcept.models.utils.structure import Point
 import pointcept.utils.comm as comm
 from pointcept.engines.test import TESTERS
 
@@ -570,7 +571,9 @@ class WandbHook(HookBase):
             # offset indicates the cumulative sum of points per sample
             offset = input_dict["offset"]
             total_points = offset[-1].item()  # Last offset value gives total points
-            points_per_second = total_points / batch_time if batch_time > 0 else 0
+            # Account for all GPUs when calculating points per second
+            total_points_all_gpus = total_points * comm.get_world_size()
+            points_per_second = total_points_all_gpus / batch_time if batch_time > 0 else 0
             
             # Log training metrics
             metrics = {
@@ -685,8 +688,8 @@ class DetailedRuntimeProfiler(HookBase):
                 # Create Point object and serialize
                 with record_function("point_init_and_serialize"):
                     point = Point(input_dict)
-                    point.serialization(order=self.trainer.model.order, 
-                                     shuffle_orders=self.trainer.model.shuffle_orders)
+                    point.serialization(order=self.trainer.cfg.model.backbone.order, 
+                                     shuffle_orders=self.trainer.cfg.model.backbone.shuffle_orders)
                 
                 # Sparsify
                 with record_function("sparsify"):
@@ -694,24 +697,17 @@ class DetailedRuntimeProfiler(HookBase):
                 
                 # Embedding
                 with record_function("embedding"):
-                    point = self.trainer.model.embedding(point)
+                    point = self.trainer.model.backbone.embedding(point)
                 
                 # Encoder
                 with record_function("encoder"):
-                    point = self.trainer.model.enc(point)
+                    point = self.trainer.model.backbone.enc(point)
                 
-                # Decoder (if not in classification mode)
-                if not self.trainer.model.cls_mode:
-                    with record_function("decoder"):
-                        point = self.trainer.model.dec(point)
+                with record_function("decoder"):
+                    point = self.trainer.model.backbone.dec(point)
                 
                 # Get loss
                 output_dict = {"loss": point.feat.mean()}  # Simplified loss for profiling
-            
-            # Profile backward pass
-            with record_function("model_backward"):
-                loss = output_dict["loss"]
-                loss.backward()
             
             prof.step()
             self.trainer.logger.info(
