@@ -580,6 +580,7 @@ class WandbHook(HookBase):
                 "train/loss": self.trainer.comm_info["model_output_dict"]["loss"].item(),
                 "train/lr": self.trainer.optimizer.param_groups[0]["lr"],
                 "train/points_per_second": points_per_second,
+                "train/grad_norm": self.trainer.comm_info.get("grad_norm", 0.0),  # Add gradient norm logging
             }
             wandb.log(metrics, step=global_step)
 
