@@ -560,10 +560,23 @@ class WandbHook(HookBase):
             # Calculate global step
             global_step = self.trainer.epoch * len(self.trainer.train_loader) + self.trainer.comm_info["iter"]
             
+            # Get batch time from storage
+            batch_time = self.trainer.storage.history("batch_time").val
+            
+            # Calculate points per second
+            input_dict = self.trainer.comm_info["input_dict"]
+            # Get total number of points in the batch
+            # coord shape is (N, 3) where N is total points across all samples in batch
+            # offset indicates the cumulative sum of points per sample
+            offset = input_dict["offset"]
+            total_points = offset[-1].item()  # Last offset value gives total points
+            points_per_second = total_points / batch_time if batch_time > 0 else 0
+            
             # Log training metrics
             metrics = {
                 "train/loss": self.trainer.comm_info["model_output_dict"]["loss"].item(),
                 "train/lr": self.trainer.optimizer.param_groups[0]["lr"],
+                "train/points_per_second": points_per_second,
             }
             wandb.log(metrics, step=global_step)
 
@@ -606,3 +619,128 @@ class WandbHook(HookBase):
                 wandb.log_artifact(artifact)
             
             wandb.finish()
+
+
+@HOOKS.register_module()
+class DetailedRuntimeProfiler(HookBase):
+    def __init__(
+        self,
+        interrupt=False,
+        wait=1,
+        warmup=1,
+        active=10,
+        repeat=1,
+        sort_by="cuda_time_total",
+        row_limit=30,
+    ):
+        self.interrupt = interrupt
+        self.wait = wait
+        self.warmup = warmup
+        self.active = active
+        self.repeat = repeat
+        self.sort_by = sort_by
+        self.row_limit = row_limit
+
+    def before_train(self):
+        self.trainer.logger.info("Profiling runtime with detailed steps...")
+        import wandb
+        from torch.profiler import (
+            profile,
+            record_function,
+            ProfilerActivity,
+            schedule,
+        )
+
+        # Create profiler output directory
+        profile_dir = os.path.join(self.trainer.cfg.save_path, 'profiler_results')
+        os.makedirs(profile_dir, exist_ok=True)
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+
+        prof = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=schedule(
+                wait=self.wait,
+                warmup=self.warmup,
+                active=self.active,
+                repeat=self.repeat,
+            ),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+        )
+        prof.start()
+        
+        for i, input_dict in enumerate(self.trainer.train_loader):
+            if i >= (self.wait + self.warmup + self.active) * self.repeat:
+                break
+                
+            # Profile data loading and transfer
+            with record_function("data_loading_and_transfer"):
+                for key in input_dict.keys():
+                    if isinstance(input_dict[key], torch.Tensor):
+                        input_dict[key] = input_dict[key].cuda(non_blocking=True)
+            
+            # Profile forward pass steps
+            with record_function("model_forward"):
+                # Create Point object and serialize
+                with record_function("point_init_and_serialize"):
+                    point = Point(input_dict)
+                    point.serialization(order=self.trainer.model.order, 
+                                     shuffle_orders=self.trainer.model.shuffle_orders)
+                
+                # Sparsify
+                with record_function("sparsify"):
+                    point.sparsify()
+                
+                # Embedding
+                with record_function("embedding"):
+                    point = self.trainer.model.embedding(point)
+                
+                # Encoder
+                with record_function("encoder"):
+                    point = self.trainer.model.enc(point)
+                
+                # Decoder (if not in classification mode)
+                if not self.trainer.model.cls_mode:
+                    with record_function("decoder"):
+                        point = self.trainer.model.dec(point)
+                
+                # Get loss
+                output_dict = {"loss": point.feat.mean()}  # Simplified loss for profiling
+            
+            # Profile backward pass
+            with record_function("model_backward"):
+                loss = output_dict["loss"]
+                loss.backward()
+            
+            prof.step()
+            self.trainer.logger.info(
+                f"Profile: [{i + 1}/{(self.wait + self.warmup + self.active) * self.repeat}]"
+            )
+        
+        # Export Chrome trace
+        trace_path = os.path.join(profile_dir, f'trace_{timestamp}.pt.trace.json')
+        prof.export_chrome_trace(trace_path)
+
+        # Log to W&B
+        if comm.is_main_process():
+            # Create a W&B Artifact for the profile
+            profile_artifact = wandb.Artifact(
+                name=f"profile_{timestamp}",
+                type="profile",
+                description="PyTorch profiler trace"
+            )
+            # Add the trace file to the artifact
+            profile_artifact.add_file(trace_path)
+            # Log the artifact
+            wandb.log_artifact(profile_artifact)
+
+        self.trainer.logger.info(
+            f"Chrome trace saved to: {trace_path}\n"
+            f"Profile data also uploaded to W&B"
+        )
+
+        prof.stop()
+
+        if self.interrupt:
+            sys.exit(0)

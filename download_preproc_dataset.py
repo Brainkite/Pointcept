@@ -30,7 +30,7 @@ def download_and_unpack_tar(url, output_folder):
         print(f"An unexpected error occurred: {e}")
 
 # Example usage:
-url = "https://huggingface.co/datasets/Pointcept/s3dis-compressed/resolve/main/s3dis.tar.gz"
-output_folder = "./data/s3dis"  # Choose your desired output folder
+url = "https://huggingface.co/datasets/Pointcept/nuscenes-compressed/resolve/main/nuscenes.tar.gz"
+output_folder = "./data/nuscene"  # Choose your desired output folder
 
 download_and_unpack_tar(url, output_folder)
