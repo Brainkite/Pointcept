@@ -5,7 +5,7 @@ from huggingface_hub import hf_hub_download
 import concurrent.futures
 import shutil
 
-def download_file(filename: str, repo_id: str, download_folder: str) -> bool:
+def download_file(filename: str, repo_id: str, download_folder: str) -> str:
     """Downloads a single file from Hugging Face Hub."""
     local_path = os.path.join(download_folder, filename)
     if os.path.exists(local_path):
@@ -14,16 +14,14 @@ def download_file(filename: str, repo_id: str, download_folder: str) -> bool:
     
     print(f"Downloading {filename}...")
     try:
+        # Use hf_hub_download with only the essential parameters
         downloaded_path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             repo_type="dataset",
-            local_dir=download_folder,
-            local_dir_use_symlinks=False
+            local_dir=download_folder
         )
-        if downloaded_path != local_path:
-            shutil.copy2(downloaded_path, local_path)
-        return local_path
+        return downloaded_path
     except Exception as e:
         print(f"Error downloading {filename}: {e}")
         return None
