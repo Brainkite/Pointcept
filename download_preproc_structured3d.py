@@ -49,8 +49,8 @@ def get_file_list() -> List[Tuple[str, str, str]]:
     download_folder = "data/structured3d/downloads"
     files = []
     
-    # Generate file information for files 01-99
-    for i in range(1, 100):
+    # Generate file information for files 01-15
+    for i in range(1, 16):  # Changed from range(1, 100) to range(1, 16)
         file_name = f"structured3d_{i:02d}.tar.gz"
         url = f"{base_url}/{file_name}"
         local_path = os.path.join(download_folder, file_name)
