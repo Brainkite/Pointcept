@@ -3,20 +3,22 @@ import tarfile
 from tqdm import tqdm
 from datasets import DownloadManager
 import concurrent.futures
-import argparse
 from typing import List, Tuple
 
 def download_file(url: str, local_path: str) -> Tuple[str, bool]:
-    """Downloads a file with progress bar."""
+    """Downloads a file directly without symbolic links."""
     try:
-        download_manager = DownloadManager()
+        download_manager = DownloadManager(local_files_only=False)
         downloaded_path = download_manager.download(url)
         
-        # Copy or move the file to our desired location
+        # Directly copy the file to our desired location
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         if os.path.exists(local_path):
             os.remove(local_path)
-        os.rename(downloaded_path, local_path)
+            
+        # Instead of rename (which might create symlinks), read and write the file
+        with open(downloaded_path, 'rb') as src, open(local_path, 'wb') as dst:
+            dst.write(src.read())
         
         return local_path, True
     except Exception as e:
@@ -108,14 +110,12 @@ def download_and_extract_structured3d(num_threads: int = 1):
             except Exception as e:
                 print(f"Extraction failed for {os.path.basename(local_path)}: {e}")
 
-def main():
+if __name__ == "__main__":
+    import argparse
     parser = argparse.ArgumentParser(description='Download and extract Structured3D dataset')
     parser.add_argument('--num_threads', type=int, default=1,
                       help='Number of parallel threads for downloading and extracting (default: 1)')
     args = parser.parse_args()
     
     print(f"Starting download and extraction with {args.num_threads} threads...")
-    download_and_extract_structured3d(args.num_threads)
-
-if __name__ == "__main__":
-    main() 
+    download_and_extract_structured3d(args.num_threads) 
