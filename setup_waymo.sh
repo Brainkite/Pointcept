@@ -36,7 +36,7 @@ echo "Starting download with subset size of 2..."
 ./download_waymo.py \
     --raw_dir data/waymo_raw \
     --num_download_workers 10 \
-    --subset_size 2 \
+    --subset_size 0 \
     --cleanup
 
 # Step 2: Process the raw data
