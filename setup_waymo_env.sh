@@ -27,25 +27,4 @@ pip install waymo-open-dataset-tf-2-12-0
 # Install additional required packages
 pip install numpy tensorflow tensorflow-gpu tqdm
 
-# Create directories for the dataset
-mkdir -p data/waymo_raw
-mkdir -p data/waymo_processed
-
-# Step 1: Download the raw data with subset size of 2
-echo "Starting download with subset size of 2..."
-./download_waymo.py \
-    --raw_dir data/waymo_raw \
-    --num_download_workers 10 \
-    --subset_size 0 \
-    --cleanup
-
-# Step 2: Process the raw data
-echo "Starting processing of downloaded data..."
-./batch_process_waymo.py \
-    --raw_dir data/waymo_raw \
-    --output_dir data/waymo_processed \
-    --codebase_dir . \
-    --num_workers 50 \
-    --cleanup
-
-echo "Setup, download, and processing completed!" 
+echo "Waymo env Setup completed!" 
