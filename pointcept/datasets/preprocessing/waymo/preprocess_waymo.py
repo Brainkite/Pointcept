@@ -26,12 +26,20 @@ import glob
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+from typing import Dict, List
 
 
 def create_lidar(frame):
     """Parse and save the lidar data in psd format.
     Args:
         frame (:obj:`Frame`): Open dataset frame proto.
+    Returns:
+        velodyne: point cloud data
+        valid_masks: valid masks for each lidar
+        points_per_lidar: array of number of points per lidar
     """
     (
         range_images,
@@ -56,18 +64,21 @@ def create_lidar(frame):
         keep_polar_features=True,
     )
 
+    # Store number of points per lidar for both first and second returns
+    points_per_lidar = np.array([
+        len(points[i]) + len(points_ri2[i]) for i in range(len(points))
+    ], dtype=np.uint32)
+
     # 3d points in vehicle frame.
     points_all = np.concatenate(points, axis=0)
     points_all_ri2 = np.concatenate(points_ri2, axis=0)
-    # point labels.
-
     points_all = np.concatenate([points_all, points_all_ri2], axis=0)
 
     velodyne = np.c_[points_all[:, 3:6], points_all[:, 1]]
     velodyne = velodyne.reshape((velodyne.shape[0] * velodyne.shape[1]))
 
     valid_masks = [valid_masks, valid_masks_ri2]
-    return velodyne, valid_masks
+    return velodyne, valid_masks, points_per_lidar
 
 
 def create_label(frame):
@@ -278,12 +289,72 @@ def convert_range_image_to_point_cloud_labels(
     return point_labels
 
 
-def handle_process(file_path, output_root, test_frame_list):
+def extract_frame_metadata(frame):
+    """Extract metadata from a Waymo frame.
+    Args:
+        frame: Waymo frame proto
+    Returns:
+        dict: Dictionary containing frame metadata
+    """
+    # Get context stats
+    stats = frame.context.stats
+
+    # Extract segment_id safely
+    segment_id = None
+    try:
+        if '-' in frame.context.name:
+            segment_id = frame.context.name.split('-')[1].split('_')[0]
+    except (IndexError, AttributeError):
+        pass
+
+    metadata = {
+        'timestamp': frame.timestamp_micros,
+        'context_name': frame.context.name,
+        
+        # Location information 
+        'location': {
+            'segment_id': segment_id,
+            'time_of_day': stats.time_of_day if hasattr(stats, 'time_of_day') else None,
+            'location': stats.location if hasattr(stats, 'location') else None,
+        },
+        
+        # Environmental conditions
+        'conditions': {
+            'weather': stats.weather if hasattr(stats, 'weather') else None,
+        },
+        
+        # Special conditions and scene contents
+        'scene_contents': {
+            'construction': stats.has_construction if hasattr(stats, 'has_construction') else None,
+            'pedestrians': stats.has_pedestrians if hasattr(stats, 'has_pedestrians') else None,
+            'cyclists': stats.has_cyclists if hasattr(stats, 'has_cyclists') else None,
+        },
+        
+        # Sensor configuration
+        'sensors': {
+            'num_lidars': len(frame.lasers),
+            'num_cameras': len(frame.context.camera_calibrations),
+            'lidar_names': [open_dataset.LaserName.Name.Name(laser.name) for laser in frame.lasers],
+            'camera_names': [open_dataset.CameraName.Name.Name(cam.name) for cam in frame.context.camera_calibrations],
+        },
+        
+        # Vehicle pose and motion
+        'pose': {
+            'transform': [float(x) for x in frame.pose.transform],  # 4x4 transformation matrix
+        }
+    }
+    return metadata
+
+
+def handle_process(file_path: str, output_root: str, test_frame_list: List[str]):
+    """Process a single Waymo file."""
     file = os.path.basename(file_path)
     split = os.path.basename(os.path.dirname(file_path))
     print(f"Parsing {split}/{file}")
     save_path = Path(output_root) / split / file.split(".")[0]
-
+    
+    metadata_list = []  # Local metadata list for this file
+    
     data_group = tf.data.TFRecordDataset(file_path, compression_type="")
     for data in data_group:
         frame = open_dataset.Frame()
@@ -303,16 +374,22 @@ def handle_process(file_path, output_root, test_frame_list):
         os.makedirs(save_path / timestamp, exist_ok=True)
 
         # extract frame pass above check
-        point_cloud, valid_masks = create_lidar(frame)
+        point_cloud, valid_masks, points_per_lidar = create_lidar(frame)
         point_cloud = point_cloud.reshape(-1, 4)
         coord = point_cloud[:, :3]
         strength = np.tanh(point_cloud[:, -1].reshape([-1, 1]))
         pose = np.array(frame.pose.transform, np.float32).reshape(4, 4)
         mask = np.array(valid_masks, dtype=object)
 
+        # Extract metadata and add frame path
+        metadata = extract_frame_metadata(frame)
+        metadata['frame_path'] = str(save_path / timestamp)
+        metadata_list.append(metadata)
+
         np.save(save_path / timestamp / "coord.npy", coord)
         np.save(save_path / timestamp / "strength.npy", strength)
         np.save(save_path / timestamp / "pose.npy", pose)
+        np.save(save_path / timestamp / "points_per_lidar.npy", points_per_lidar)
 
         # save mask for reverse prediction
         if split != "training":
@@ -323,65 +400,80 @@ def handle_process(file_path, output_root, test_frame_list):
             # ignore TYPE_UNDEFINED, ignore_index 0 -> -1
             label = create_label(frame)[:, 1].reshape([-1]) - 1
             np.save(save_path / timestamp / "segment.npy", label)
+    
+    # Return metadata for this file
+    return metadata_list
+
+
+def save_metadata(metadata_list: List[Dict], output_root: str, split: str):
+    """Save metadata to Parquet file.
+    Args:
+        metadata_list: List of metadata dictionaries
+        output_root: Root directory for output
+        split: Dataset split (training/validation/testing)
+    """
+    if not metadata_list:
+        return
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(metadata_list)
+    
+    # Flatten nested dictionaries
+    df = pd.json_normalize(df.to_dict('records'))
+    
+    # Save to Parquet
+    output_path = Path(output_root) / split / "metadata.parquet"
+    df.to_parquet(output_path, index=False)
+    print(f"Saved metadata for {split} split to {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_root', required=True, help='Path to the Waymo dataset')
+    parser.add_argument('--output_root', required=True, help='Path to save the processed dataset')
+    parser.add_argument('--splits', nargs='+', default=['training', 'validation'], help='Dataset splits to process')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for preprocessing')
+    args = parser.parse_args()
+
+    for split in args.splits:
+        split_dir = os.path.join(args.dataset_root, split)
+        file_list = glob.glob(os.path.join(split_dir, '*.tfrecord'))
+        if not file_list:
+            print(f"No files found in {split_dir}")
+            continue
+        print(f"Processing {len(file_list)} files in {split} split")
+
+        # Create output directories
+        os.makedirs(os.path.join(args.output_root, split), exist_ok=True)
+
+        # Load test frame list
+        test_frame_file = os.path.join(
+            os.path.dirname(__file__), "3d_semseg_test_set_frames.txt"
+        )
+        test_frame_list = [x.rstrip() for x in (open(test_frame_file, "r").readlines())]
+
+        # Preprocess data
+        print("Processing scenes...")
+        
+        # Process files using parallel workers and collect metadata
+        with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
+            results = list(
+                pool.map(
+                    handle_process,
+                    file_list,
+                    repeat(args.output_root),
+                    repeat(test_frame_list),
+                )
+            )
+        
+        # Flatten the list of metadata lists
+        all_metadata = []
+        for file_metadata in results:
+            all_metadata.extend(file_metadata)
+        
+        # Save metadata for this split
+        save_metadata(all_metadata, args.output_root, split)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--dataset_root",
-        required=True,
-        help="Path to the Waymo dataset",
-    )
-    parser.add_argument(
-        "--output_root",
-        required=True,
-        help="Output path where train/val folders will be located",
-    )
-    parser.add_argument(
-        "--splits",
-        required=True,
-        nargs="+",
-        choices=["training", "validation", "testing"],
-        help="Splits need to process ([training, validation, testing]).",
-    )
-    parser.add_argument(
-        "--num_workers",
-        default=mp.cpu_count(),
-        type=int,
-        help="Num workers for preprocessing.",
-    )
-    config = parser.parse_args()
-
-    # load file list
-    file_list = glob.glob(
-        os.path.join(os.path.abspath(config.dataset_root), "*", "*.tfrecord")
-    )
-    assert len(file_list) == 1150
-
-    # Create output directories
-    for split in config.splits:
-        os.makedirs(os.path.join(config.output_root, split), exist_ok=True)
-
-    file_list = [
-        file
-        for file in file_list
-        if os.path.basename(os.path.dirname(file)) in config.splits
-    ]
-
-    # Load test frame list
-    test_frame_file = os.path.join(
-        os.path.dirname(__file__), "3d_semseg_test_set_frames.txt"
-    )
-    test_frame_list = [x.rstrip() for x in (open(test_frame_file, "r").readlines())]
-
-    # Preprocess data.
-    print("Processing scenes...")
-    pool = ProcessPoolExecutor(max_workers=config.num_workers)
-    _ = list(
-        pool.map(
-            handle_process,
-            file_list,
-            repeat(config.output_root),
-            repeat(test_frame_list),
-        )
-    )
+    main()
