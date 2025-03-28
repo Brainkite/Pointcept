@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 def create_symlinks(bucket_path, temp_raw_dir):
     """Create symlinks from bucket files to temporary raw directory."""
+    # Convert to absolute paths
+    bucket_path = os.path.abspath(bucket_path)
+    temp_raw_dir = os.path.abspath(temp_raw_dir)
+    
     logger.info(f"Creating symlinks from {bucket_path} to {temp_raw_dir}")
     
     # Create temp raw directory structure
@@ -21,6 +25,16 @@ def create_symlinks(bucket_path, temp_raw_dir):
     for split in ['training', 'validation']:
         split_bucket_path = os.path.join(bucket_path, 'individual_files', split)
         split_temp_path = os.path.join(temp_raw_dir, split)
+        
+        logger.info(f"Source path: {split_bucket_path}")
+        
+        # Verify that source directory exists
+        if not os.path.exists(split_bucket_path):
+            logger.error(f"Source directory does not exist: {split_bucket_path}")
+            continue
+            
+        # List contents of source directory
+        logger.info(f"Contents of {split_bucket_path}: {os.listdir(split_bucket_path)[:5]}")
         
         # Remove existing symlink if it exists
         if os.path.exists(split_temp_path):
@@ -40,11 +54,19 @@ def create_symlinks(bucket_path, temp_raw_dir):
 
 def preprocess_dataset(raw_dir, output_dir, splits, num_workers):
     """Run the preprocessing script."""
+    # Convert to absolute paths
+    raw_dir = os.path.abspath(raw_dir)
+    output_dir = os.path.abspath(output_dir)
+    
+    logger.info(f"Preprocessing dataset from {raw_dir} to {output_dir}")
+    
     cmd = f"python pointcept/datasets/preprocessing/waymo/preprocess_waymo.py "
     cmd += f"--dataset_root {raw_dir} "
     cmd += f"--output_root {output_dir} "
     cmd += f"--splits {' '.join(splits)} "
     cmd += f"--num_workers {num_workers}"
+    
+    logger.info(f"Running command: {cmd}")
     
     try:
         subprocess.run(cmd, shell=True, check=True)
@@ -54,6 +76,10 @@ def preprocess_dataset(raw_dir, output_dir, splits, num_workers):
 
 def create_data_symlink(processed_dir, codebase_dir):
     """Create symlink in the data directory."""
+    # Convert to absolute paths
+    processed_dir = os.path.abspath(processed_dir)
+    codebase_dir = os.path.abspath(codebase_dir)
+    
     data_dir = os.path.join(codebase_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
     
@@ -77,7 +103,7 @@ def cleanup_temp_dir(temp_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess Waymo dataset in Google Colab")
-    parser.add_argument("--bucket_path", default="./waymo_data", 
+    parser.add_argument("--bucket_path", default="../waymo_data", 
                         help="Path to the bucket containing Waymo dataset")
     parser.add_argument("--output_dir", default="./processed_waymo",
                         help="Directory to store processed dataset")
