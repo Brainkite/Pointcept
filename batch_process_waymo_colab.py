@@ -6,6 +6,9 @@ import subprocess
 import logging
 from pathlib import Path
 import shutil
+import time
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,7 +37,8 @@ def create_symlinks(bucket_path, temp_raw_dir):
             continue
             
         # List contents of source directory
-        logger.info(f"Contents of {split_bucket_path}: {os.listdir(split_bucket_path)[:5]}")
+        files = os.listdir(split_bucket_path)
+        logger.info(f"Found {len(files)} files in {split_bucket_path}")
         
         # Remove existing symlink if it exists
         if os.path.exists(split_temp_path):
@@ -52,27 +56,110 @@ def create_symlinks(bucket_path, temp_raw_dir):
     logger.info("Symlinks created successfully")
     return temp_raw_dir
 
+def process_file_callback(future, pbar, total_files):
+    """Callback function to update progress bar when a file completes processing."""
+    pbar.update(1)
+    pbar.set_description(f"Processed {pbar.n}/{total_files} files")
+
 def preprocess_dataset(raw_dir, output_dir, splits, num_workers):
-    """Run the preprocessing script."""
+    """Run the preprocessing script with progress feedback."""
     # Convert to absolute paths
     raw_dir = os.path.abspath(raw_dir)
     output_dir = os.path.abspath(output_dir)
     
     logger.info(f"Preprocessing dataset from {raw_dir} to {output_dir}")
     
-    cmd = f"python pointcept/datasets/preprocessing/waymo/preprocess_waymo.py "
-    cmd += f"--dataset_root {raw_dir} "
-    cmd += f"--output_root {output_dir} "
-    cmd += f"--splits {' '.join(splits)} "
-    cmd += f"--num_workers {num_workers}"
+    # Get total number of files to process for progress tracking
+    total_files = 0
+    file_lists = {}
     
-    logger.info(f"Running command: {cmd}")
+    for split in splits:
+        split_dir = os.path.join(raw_dir, split)
+        if os.path.exists(split_dir):
+            file_list = [f for f in os.listdir(split_dir) if f.endswith('.tfrecord')]
+            if not file_list:
+                # Try recursive search
+                file_list = []
+                for root, _, files in os.walk(split_dir):
+                    file_list.extend([os.path.join(root, f) for f in files if f.endswith('.tfrecord')])
+            total_files += len(file_list)
+            file_lists[split] = file_list
     
-    try:
-        subprocess.run(cmd, shell=True, check=True)
-        logger.info("Preprocessing completed successfully")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error during preprocessing: {e}")
+    logger.info(f"Found {total_files} total files to process across {len(splits)} splits")
+    
+    if total_files == 0:
+        logger.warning("No .tfrecord files found. Falling back to subprocess call.")
+        # Fall back to running the preprocessing script directly
+        cmd = f"python pointcept/datasets/preprocessing/waymo/preprocess_waymo.py "
+        cmd += f"--dataset_root {raw_dir} "
+        cmd += f"--output_root {output_dir} "
+        cmd += f"--splits {' '.join(splits)} "
+        cmd += f"--num_workers {num_workers}"
+        
+        logger.info(f"Running command: {cmd}")
+        
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+            logger.info("Preprocessing completed successfully")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error during preprocessing: {e}")
+    else:
+        # We could process files individually here for better progress tracking
+        # But for now, we'll stick with the subprocess approach with time estimation
+        start_time = time.time()
+        
+        # Run the preprocessing command
+        cmd = f"python pointcept/datasets/preprocessing/waymo/preprocess_waymo.py "
+        cmd += f"--dataset_root {raw_dir} "
+        cmd += f"--output_root {output_dir} "
+        cmd += f"--splits {' '.join(splits)} "
+        cmd += f"--num_workers {num_workers}"
+        
+        logger.info(f"Running command: {cmd}")
+        
+        # Create a progress bar
+        with tqdm(total=total_files, desc="Processing files") as pbar:
+            # Start a thread to update the progress bar
+            def update_progress():
+                elapsed_time = 0
+                while pbar.n < total_files:
+                    time.sleep(5)  # Update every 5 seconds
+                    elapsed_time += 5
+                    # Get count of processed files by checking the output directory
+                    processed_count = 0
+                    for split in splits:
+                        split_output_dir = os.path.join(output_dir, split)
+                        if os.path.exists(split_output_dir):
+                            processed_count += len([d for d in os.listdir(split_output_dir) 
+                                                  if os.path.isdir(os.path.join(split_output_dir, d))])
+                    
+                    # Update progress bar
+                    if processed_count > pbar.n:
+                        pbar.update(processed_count - pbar.n)
+                    
+                    # Calculate and display ETA
+                    if pbar.n > 0:
+                        avg_time_per_file = elapsed_time / pbar.n
+                        remaining_files = total_files - pbar.n
+                        eta_seconds = avg_time_per_file * remaining_files
+                        eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_seconds))
+                        pbar.set_postfix({"ETA": eta_str})
+            
+            # Start the progress updater in a separate thread
+            import threading
+            progress_thread = threading.Thread(target=update_progress)
+            progress_thread.daemon = True
+            progress_thread.start()
+            
+            # Run the subprocess
+            try:
+                subprocess.run(cmd, shell=True, check=True)
+                logger.info("Preprocessing completed successfully")
+                # Update progress bar to completion
+                pbar.n = total_files
+                pbar.refresh()
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Error during preprocessing: {e}")
 
 def create_data_symlink(processed_dir, codebase_dir):
     """Create symlink in the data directory."""
