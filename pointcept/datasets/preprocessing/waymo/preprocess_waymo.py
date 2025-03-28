@@ -438,9 +438,16 @@ def main():
     for split in args.splits:
         split_dir = os.path.join(args.dataset_root, split)
         file_list = glob.glob(os.path.join(split_dir, '*.tfrecord'))
+        
+        # If no files found directly, try to find them recursively
+        if not file_list:
+            print(f"No files found directly in {split_dir}, searching recursively...")
+            file_list = glob.glob(os.path.join(split_dir, '**/*.tfrecord'), recursive=True)
+        
         if not file_list:
             print(f"No files found in {split_dir}")
             continue
+        
         print(f"Processing {len(file_list)} files in {split} split")
 
         # Create output directories
