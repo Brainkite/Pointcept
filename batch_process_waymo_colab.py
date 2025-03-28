@@ -17,30 +17,23 @@ def create_symlinks(bucket_path, temp_raw_dir):
     # Create temp raw directory structure
     os.makedirs(temp_raw_dir, exist_ok=True)
     
-    # Create symlinks for training and validation
+    # Create symlinks for training and validation directories
     for split in ['training', 'validation']:
         split_bucket_path = os.path.join(bucket_path, 'individual_files', split)
         split_temp_path = os.path.join(temp_raw_dir, split)
         
-        # Create the split directory
-        os.makedirs(split_temp_path, exist_ok=True)
+        # Remove existing symlink if it exists
+        if os.path.exists(split_temp_path):
+            if os.path.islink(split_temp_path):
+                os.unlink(split_temp_path)
+            elif os.path.isdir(split_temp_path):
+                shutil.rmtree(split_temp_path)
+            else:
+                os.remove(split_temp_path)
         
-        # Create symlinks for all tfrecord files
-        for filename in os.listdir(split_bucket_path):
-            if filename.endswith('.tfrecord'):
-                source = os.path.join(split_bucket_path, filename)
-                target = os.path.join(split_temp_path, filename)
-                
-                # Remove existing symlink if it exists
-                if os.path.exists(target):
-                    if os.path.islink(target):
-                        os.unlink(target)
-                    else:
-                        os.remove(target)
-                
-                # Create symlink
-                os.symlink(source, target)
-                logger.info(f"Created symlink: {target} -> {source}")
+        # Create directory symlink
+        os.symlink(split_bucket_path, split_temp_path)
+        logger.info(f"Created directory symlink: {split_temp_path} -> {split_bucket_path}")
     
     logger.info("Symlinks created successfully")
     return temp_raw_dir
