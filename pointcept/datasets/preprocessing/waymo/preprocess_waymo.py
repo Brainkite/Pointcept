@@ -30,6 +30,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from typing import Dict, List
+import time
 
 
 def create_lidar(frame):
@@ -346,46 +347,108 @@ def extract_frame_metadata(frame):
     return metadata
 
 
-def handle_process(file_path: str, output_root: str, test_frame_list: List[str]):
+def handle_process(file_path: str, output_root: str, test_frame_list: List[str], file_index: int = None, total_files: int = None):
     """Process a single Waymo file."""
     file = os.path.basename(file_path)
     split = os.path.basename(os.path.dirname(file_path))
-    print(f"Parsing {split}/{file}")
+    
+    progress_str = ""
+    if file_index is not None and total_files is not None:
+        progress_str = f"[{file_index}/{total_files}] ({file_index/total_files*100:.1f}%)"
+        print(f"{progress_str} Parsing {split}/{file}")
+    else:
+        print(f"Parsing {split}/{file}")
+    
     save_path = Path(output_root) / split / file.split(".")[0]
     
     metadata_list = []  # Local metadata list for this file
     
+    print(f"{progress_str} Loading TFRecord dataset {file}...")
     data_group = tf.data.TFRecordDataset(file_path, compression_type="")
-    for data in data_group:
+    frame_count = 0
+    processed_frame_count = 0
+    
+    # Count total frames first
+    print(f"{progress_str} Counting total frames in {file} (may take a while)...")
+    start_time = time.time()
+    for _ in data_group:
+        frame_count += 1
+        if frame_count % 100 == 0:
+            print(f"{progress_str} Counted {frame_count} frames so far... ({time.time() - start_time:.1f}s)")
+    
+    print(f"{progress_str} Found {frame_count} total frames in {file} ({time.time() - start_time:.1f}s)")
+    
+    # Reset dataset iterator
+    print(f"{progress_str} Starting to process frames in {file}...")
+    data_group = tf.data.TFRecordDataset(file_path, compression_type="")
+    
+    start_time = time.time()
+    for i, data in enumerate(data_group):
+        frame_start_time = time.time()
+        
+        # Display frame processing progress periodically
+        if frame_count > 0 and (i % max(1, frame_count // 20) == 0 or i == frame_count - 1):
+            elapsed = time.time() - start_time
+            frames_per_sec = (i + 1) / elapsed if elapsed > 0 else 0
+            est_remaining = (frame_count - i - 1) / frames_per_sec if frames_per_sec > 0 else 0
+            print(f"{progress_str} Processing file {file}: frame {i+1}/{frame_count} ({(i+1)/frame_count*100:.1f}%) - "
+                  f"{frames_per_sec:.1f} frames/s, est. {est_remaining:.1f}s remaining")
+
+        # Parse frame
+        parse_start = time.time()
         frame = open_dataset.Frame()
         frame.ParseFromString(bytearray(data.numpy()))
         context_name = frame.context.name
         timestamp = str(frame.timestamp_micros)
+        parse_time = time.time() - parse_start
 
+        process_frame = False
         if split != "testing":
             # for training and validation frame, extract labelled frame
-            if not frame.lasers[0].ri_return1.segmentation_label_compressed:
-                continue
+            if frame.lasers[0].ri_return1.segmentation_label_compressed:
+                process_frame = True
         else:
             # for testing frame, extract frame in test_frame_list
-            if f"{context_name},{timestamp}" not in test_frame_list:
-                continue
-
+            if f"{context_name},{timestamp}" in test_frame_list:
+                process_frame = True
+                
+        if not process_frame:
+            continue
+            
+        processed_frame_count += 1
+        
+        # For detailed logging, only log every Nth frame or significant frames
+        verbose_log = (processed_frame_count % 10 == 0) or (processed_frame_count <= 3) or (i == frame_count - 1)
+        
+        if verbose_log:
+            print(f"{progress_str} Creating directory for frame {i+1}/{frame_count}, timestamp {timestamp}...")
         os.makedirs(save_path / timestamp, exist_ok=True)
 
         # extract frame pass above check
+        if verbose_log:
+            print(f"{progress_str} Extracting lidar data for frame {i+1}/{frame_count}...")
+        lidar_start = time.time()
         point_cloud, valid_masks, points_per_lidar = create_lidar(frame)
         point_cloud = point_cloud.reshape(-1, 4)
         coord = point_cloud[:, :3]
         strength = np.tanh(point_cloud[:, -1].reshape([-1, 1]))
         pose = np.array(frame.pose.transform, np.float32).reshape(4, 4)
         mask = np.array(valid_masks, dtype=object)
+        lidar_time = time.time() - lidar_start
 
         # Extract metadata and add frame path
+        if verbose_log:
+            print(f"{progress_str} Extracting metadata for frame {i+1}/{frame_count}...")
+        metadata_start = time.time()
         metadata = extract_frame_metadata(frame)
         metadata['frame_path'] = str(save_path / timestamp)
         metadata_list.append(metadata)
+        metadata_time = time.time() - metadata_start
 
+        # Save all extracted data
+        if verbose_log:
+            print(f"{progress_str} Saving point cloud data for frame {i+1}/{frame_count} ({len(coord)} points)...")
+        save_start = time.time()
         np.save(save_path / timestamp / "coord.npy", coord)
         np.save(save_path / timestamp / "strength.npy", strength)
         np.save(save_path / timestamp / "pose.npy", pose)
@@ -397,10 +460,29 @@ def handle_process(file_path: str, output_root: str, test_frame_list: List[str])
 
         # save label
         if split != "testing":
-            # ignore TYPE_UNDEFINED, ignore_index 0 -> -1
+            if verbose_log:
+                print(f"{progress_str} Extracting and saving labels for frame {i+1}/{frame_count}...")
+            label_start = time.time()
             label = create_label(frame)[:, 1].reshape([-1]) - 1
             np.save(save_path / timestamp / "segment.npy", label)
+            label_time = time.time() - label_start
+            if verbose_log:
+                print(f"{progress_str} Label extraction took {label_time:.2f}s")
+        save_time = time.time() - save_start
+        
+        frame_total_time = time.time() - frame_start_time
+        
+        # Print detailed timing for significant frames
+        if verbose_log:
+            print(f"{progress_str} Frame {i+1}/{frame_count} timing: "
+                  f"parse={parse_time:.2f}s, lidar={lidar_time:.2f}s, "
+                  f"metadata={metadata_time:.2f}s, save={save_time:.2f}s, "
+                  f"total={frame_total_time:.2f}s")
     
+    total_time = time.time() - start_time
+    print(f"{progress_str} Completed {split}/{file}: processed {processed_frame_count}/{frame_count} frames in {total_time:.1f}s "
+          f"({processed_frame_count/total_time:.1f} frames/s)")
+        
     # Return metadata for this file
     return metadata_list
 
@@ -435,8 +517,24 @@ def main():
     parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for preprocessing')
     args = parser.parse_args()
 
+    # Display overall settings
+    print(f"=== Waymo Dataset Preprocessing ===")
+    print(f"Dataset root: {args.dataset_root}")
+    print(f"Output root: {args.output_root}")
+    print(f"Splits: {args.splits}")
+    print(f"Number of workers: {args.num_workers}")
+    print(f"=====================================")
+
+    start_time = time.time()
+    total_files_all_splits = 0
+    file_lists_by_split = {}
+    
+    # First pass: count total files and find all files
+    print("Searching for .tfrecord files...")
     for split in args.splits:
+        split_start_time = time.time()
         split_dir = os.path.join(args.dataset_root, split)
+        print(f"Searching in {split_dir}...")
         file_list = glob.glob(os.path.join(split_dir, '*.tfrecord'))
         
         # If no files found directly, try to find them recursively
@@ -448,38 +546,83 @@ def main():
             print(f"No files found in {split_dir}")
             continue
         
-        print(f"Processing {len(file_list)} files in {split} split")
+        split_search_time = time.time() - split_start_time
+        print(f"Found {len(file_list)} files in {split} split (search took {split_search_time:.2f}s)")
+        total_files_all_splits += len(file_list)
+        file_lists_by_split[split] = file_list
+
+    print(f"Total files to process across all splits: {total_files_all_splits}")
+    
+    # Load test frame list
+    print("Loading test frame list...")
+    test_frame_file = os.path.join(
+        os.path.dirname(__file__), "3d_semseg_test_set_frames.txt"
+    )
+    test_frame_list = [x.rstrip() for x in (open(test_frame_file, "r").readlines())]
+    print(f"Loaded {len(test_frame_list)} test frames")
+    
+    processed_files_count = 0
+    
+    # Process each split
+    for split in args.splits:
+        if split not in file_lists_by_split:
+            continue
+            
+        file_list = file_lists_by_split[split]
+        split_start_time = time.time()
+        print(f"\n[Split: {split}] Processing {len(file_list)} files...")
 
         # Create output directories
-        os.makedirs(os.path.join(args.output_root, split), exist_ok=True)
-
-        # Load test frame list
-        test_frame_file = os.path.join(
-            os.path.dirname(__file__), "3d_semseg_test_set_frames.txt"
-        )
-        test_frame_list = [x.rstrip() for x in (open(test_frame_file, "r").readlines())]
-
+        output_dir = os.path.join(args.output_root, split)
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"Created output directory: {output_dir}")
+        
         # Preprocess data
-        print("Processing scenes...")
+        print(f"Processing {split} scenes with {args.num_workers} workers...")
+        
+        # Create additional parameters for tracking progress
+        file_indices = [processed_files_count + i + 1 for i in range(len(file_list))]
+        total_files_list = [total_files_all_splits] * len(file_list)
         
         # Process files using parallel workers and collect metadata
+        pool_start_time = time.time()
         with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
+            print(f"Starting parallel processing with {args.num_workers} workers...")
             results = list(
                 pool.map(
                     handle_process,
                     file_list,
                     repeat(args.output_root),
                     repeat(test_frame_list),
+                    file_indices,
+                    total_files_list,
                 )
             )
+        pool_time = time.time() - pool_start_time
+        print(f"Parallel processing completed in {pool_time:.2f}s")
         
         # Flatten the list of metadata lists
         all_metadata = []
+        print("Gathering metadata from all processed files...")
         for file_metadata in results:
             all_metadata.extend(file_metadata)
         
         # Save metadata for this split
+        print(f"Saving metadata for {split} split...")
         save_metadata(all_metadata, args.output_root, split)
+        
+        processed_files_count += len(file_list)
+        split_time = time.time() - split_start_time
+        print(f"[Split: {split}] Completed processing {len(file_list)} files in {split_time:.2f}s "
+              f"({len(file_list)/split_time:.2f} files/s).")
+    
+    total_time = time.time() - start_time
+    print(f"\n=== Processing Complete ===")
+    print(f"Processed {processed_files_count}/{total_files_all_splits} files.")
+    print(f"Total processing time: {total_time:.2f}s")
+    print(f"Average processing time per file: {total_time/processed_files_count:.2f}s")
+    print(f"Results saved to: {args.output_root}")
+    print(f"=============================")
 
 
 if __name__ == "__main__":
