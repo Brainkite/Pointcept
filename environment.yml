@@ -36,6 +36,7 @@ dependencies:
   - matplotlib
   - black
   - open3d
+  - wandb
   - pip:
     - --find-links https://data.pyg.org/whl/torch-2.5.0+cu124.html
     - torch-cluster
