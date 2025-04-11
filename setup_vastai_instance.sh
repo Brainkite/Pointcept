@@ -2,11 +2,7 @@
 
 set -e
 
-cd /workspace
-
-echo "### CLONING POINTCEPT REPO"
-git clone https://github.com/Brainkite/Pointcept.git
-cd Pointcept
+cd /workspace/Pointcept
 
 echo "### DOWNLOAD WAYMO DATASET"
 bash ./download_waymo_HF.sh
