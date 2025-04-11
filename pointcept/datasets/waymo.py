@@ -8,6 +8,7 @@ Please cite our work if the code is helpful to you.
 import os
 import numpy as np
 import glob
+import warnings
 
 from .builder import DATASETS
 from .defaults import DefaultDataset
@@ -20,6 +21,7 @@ class WaymoDataset(DefaultDataset):
         timestamp=(0,),
         reference_label=True,
         timing_embedding=False,
+        subset_size=1.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -27,7 +29,34 @@ class WaymoDataset(DefaultDataset):
         self.timestamp = timestamp
         self.reference_label = reference_label
         self.timing_embedding = timing_embedding
+        self.subset_size = subset_size
         self.data_list = sorted(self.data_list)
+
+        if not (0.0 < self.subset_size <= 1.0):
+             raise ValueError(
+                 f"subset_size must be between 0.0 (exclusive) and 1.0 (inclusive), but got {self.subset_size}"
+             )
+
+        if self.subset_size < 1.0:
+            if self.test_mode:
+                warnings.warn(
+                    f"subset_size ({self.subset_size}) is ignored during test_mode."
+                )
+            else:
+                original_size = len(self.data_list)
+                if original_size > 0:
+                    num_samples = max(1, int(original_size * self.subset_size))
+                    indices = np.linspace(
+                        0, original_size - 1, num=num_samples, dtype=int
+                    )
+                    self.data_list = [self.data_list[i] for i in indices]
+                    print(
+                        f"Using {len(self.data_list)} samples ({self.subset_size*100:.2f}%) "
+                        f"of the original {original_size} samples, selected via linspace."
+                    )
+                else:
+                     warnings.warn("Dataset is empty, subset selection skipped.")
+
         _, self.sequence_offset, self.sequence_index = np.unique(
             [os.path.dirname(data) for data in self.data_list],
             return_index=True,

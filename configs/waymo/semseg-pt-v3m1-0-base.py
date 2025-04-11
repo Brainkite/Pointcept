@@ -94,17 +94,17 @@ names = [
     # Bushes, tree branches, tall grasses, flowers etc.
     "Vegetation",
     "Tree Trunk",
-    # Curb on the edge of roads. This does not include road boundaries if there’s no curb.
+    # Curb on the edge of roads. This does not include road boundaries if there's no curb.
     "Curb",
     # Surface a vehicle could drive on. This includes the driveway connecting
     # parking lot and road over a section of sidewalk.
     "Road",
-    # Marking on the road that’s specifically for defining lanes such as
+    # Marking on the road that's specifically for defining lanes such as
     # single/double white/yellow lines.
     "Lane Marker",
     # Marking on the road other than lane markers, bumps, cateyes, railtracks etc.
     "Other Ground",
-    # Most horizontal surface that’s not drivable, e.g. grassy hill, pedestrian walkway stairs etc.
+    # Most horizontal surface that's not drivable, e.g. grassy hill, pedestrian walkway stairs etc.
     "Walkable",
     # Nicely paved walkable surface when pedestrians most likely to walk on.
     "Sidewalk",
@@ -118,6 +118,7 @@ data = dict(
         type=dataset_type,
         split="training",
         data_root=data_root,
+        subset_size=1.0, 
         transform=[
             # dict(type="RandomDropout", dropout_ratio=0.2, dropout_application_ratio=0.2),
             # dict(type="RandomRotateTargetAngle", angle=(1/2, 1, 3/2), center=[0, 0, 0], axis="z", p=0.75),
@@ -153,6 +154,7 @@ data = dict(
         type=dataset_type,
         split="validation",
         data_root=data_root,
+        subset_size=0.25,
         transform=[
             dict(type="PointClip", point_cloud_range=(-75.2, -75.2, -4, 75.2, 75.2, 2)),
             dict(
@@ -176,6 +178,7 @@ data = dict(
         type=dataset_type,
         split="validation",
         data_root=data_root,
+        subset_size=1.0,
         transform=[
             dict(type="PointClip", point_cloud_range=(-75.2, -75.2, -4, 75.2, 75.2, 2)),
             dict(type="Copy", keys_dict={"segment": "origin_segment"}),
