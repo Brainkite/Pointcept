@@ -8,7 +8,7 @@ echo "### DOWNLOAD WAYMO DATASET"
 bash ./download_waymo_HF.sh
 
 echo "### EXTRACT WAYMO DATASET"
-bash ./extract_waymo_dataset.sh
+bash extract_processed_waymo.sh
 
 echo "### INSTALL ENV"
 bash ./setup_pointcept_env.sh
