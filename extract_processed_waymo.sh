@@ -15,7 +15,7 @@ echo "Starting extraction to $TARGET_DIR..."
 echo "Extracting training data..."
 cd waymo_dataset/training
 cat processed_waymo_training.tar.zst.part* | \
-  tar --use-compress-program=unzstd -T0 -xf - \
+  tar --use-compress-program=unzstd -xf - \
       --strip-components=4 \
       -C "$TARGET_DIR/training" \
       --wildcards "content/Pointcept/processed_waymo/training/*"
@@ -32,7 +32,7 @@ fi
 echo "Extracting validation data..."
 cd ../validation
 cat processed_waymo_validation.tar.zst | \
-  tar --use-compress-program=unzstd -T0 -xf - \
+  tar --use-compress-program=unzstd -xf - \
       --strip-components=4 \
       -C "$TARGET_DIR/validation" \
       --wildcards "content/Pointcept/processed_waymo/validation/*"
