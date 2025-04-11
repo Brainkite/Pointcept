@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 cd /workspace
 
 echo "### CLONING POINTCEPT REPO"
