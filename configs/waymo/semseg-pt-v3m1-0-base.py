@@ -1,15 +1,15 @@
 _base_ = ["../_base_/default_runtime.py"]
 
 # misc custom setting
-batch_size = 4  # bs: total bs in all gpus
-batch_size_val = 4
-batch_size_test = 4
-num_worker = 8
+batch_size = 8  # bs: total bs in all gpus
+batch_size_val = 8
+batch_size_test = 8
+num_worker = 16
 mix_prob = 0.8
 empty_cache = False
 enable_amp = True
-amp_dtype = "float16"
-clip_grad = 3.0
+amp_dtype = "bfloat16"
+# clip_grad = 3.0
 
 # model settings
 model = dict(
