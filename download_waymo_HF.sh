@@ -14,7 +14,7 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 # Check if huggingface_hub is installed with hf_transfer
 if ! pip show huggingface_hub | grep -q "hf_transfer"; then
     echo "Installing huggingface_hub with hf_transfer support..."
-    pip install "huggingface_hub[hf_transfer]"
+    pip install huggingface_hub hf_transfer
 fi
 
 # Dataset repository ID
@@ -28,17 +28,38 @@ echo "Downloading Waymo dataset from $DATASET_ID..."
 echo "Using hf_transfer for faster downloads..."
 echo "This may take a while depending on your internet connection..."
 
-# Download the dataset using huggingface-cli with hf_transfer
-# Specify repo_type as dataset since this is a dataset repository
-huggingface-cli download "$DATASET_ID" \
-    --repo-type dataset \
-    --token "$HUGGINGFACE_TOKEN" \
-    --local-dir "$OUTPUT_DIR"
+# Maximum number of retry attempts
+MAX_RETRIES=5
+# Initial retry count
+RETRY_COUNT=0
+# Retry delay in seconds
+RETRY_DELAY=3
 
-# Check if download was successful
-if [ $? -eq 0 ]; then
-    echo "Dataset downloaded successfully to $OUTPUT_DIR"
-else
-    echo "Error: Failed to download the dataset"
-    exit 1
-fi 
+# Download with retry loop
+download_successful=false
+while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$download_successful" = false ]; do
+    if [ $RETRY_COUNT -gt 0 ]; then
+        echo "Retry attempt $RETRY_COUNT of $MAX_RETRIES after waiting for $RETRY_DELAY seconds..."
+    fi
+    
+    huggingface-cli download "$DATASET_ID" \
+        --repo-type dataset \
+        --token "$HUGGINGFACE_TOKEN" \
+        --local-dir "$OUTPUT_DIR"
+    
+    if [ $? -eq 0 ]; then
+        echo "Dataset downloaded successfully to $OUTPUT_DIR"
+        download_successful=true
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            echo "Download failed. Retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
+            # Increase retry delay for subsequent attempts
+            RETRY_DELAY=$((RETRY_DELAY + 3))
+        else
+            echo "Error: Failed to download the dataset after $MAX_RETRIES attempts"
+            exit 1
+        fi
+    fi
+done 

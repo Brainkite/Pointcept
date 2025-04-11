@@ -9,7 +9,7 @@ mix_prob = 0.8
 empty_cache = False
 enable_amp = True
 amp_dtype = "float16"
-clip_grad = None
+clip_grad = 3.0
 
 # model settings
 model = dict(
