@@ -1,14 +1,18 @@
 _base_ = ["../_base_/default_runtime.py"]
 
 # misc custom setting
-batch_size = 8  # bs: total bs in all gpus
-batch_size_val = 8
+epoch = 50
+eval_epoch = 50
+
+batch_size = 16  # bs: total bs in all gpus
+batch_size_val = 16
 batch_size_test = 8
-num_worker = 16
+num_worker = 32
+
 mix_prob = 0.8
 empty_cache = False
 enable_amp = True
-amp_dtype = "bfloat16"
+amp_dtype = "float16"
 # clip_grad = 3.0
 
 # model settings
@@ -56,8 +60,6 @@ model = dict(
 )
 
 # scheduler settings
-epoch = 50
-eval_epoch = 50
 optimizer = dict(type="AdamW", lr=0.002, weight_decay=0.005)
 scheduler = dict(
     type="OneCycleLR",
@@ -154,7 +156,7 @@ data = dict(
         type=dataset_type,
         split="validation",
         data_root=data_root,
-        subset_size=0.25,
+        subset_size=0.33,
         transform=[
             dict(type="PointClip", point_cloud_range=(-75.2, -75.2, -4, 75.2, 75.2, 2)),
             dict(
