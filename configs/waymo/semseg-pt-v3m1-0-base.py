@@ -4,10 +4,10 @@ _base_ = ["../_base_/default_runtime.py"]
 epoch = 50
 eval_epoch = 50
 
-batch_size = 16  # bs: total bs in all gpus
-batch_size_val = 16
-batch_size_test = 8
-num_worker = 32
+batch_size = 12  # bs: total bs in all gpus
+batch_size_val = 12
+batch_size_test = 2
+num_worker = 24
 
 mix_prob = 0.8
 empty_cache = False
