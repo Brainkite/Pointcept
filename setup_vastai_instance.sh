@@ -12,10 +12,5 @@ bash extract_processed_waymo.sh
 
 rm -rf waymo_dataset
 
-echo "### INSTALL ENV"
-bash ./setup_pointcept_env.sh
-
-echo "### SETUP FINISHED"
-
-echo "### TRAIN"
-bash train_ptv3_waymo.sh
+echo "### INSTALL ENV AND TRAIN"
+bash ./setup_pointcept_env.sh && bash ./train_ptv3_waymo.sh
