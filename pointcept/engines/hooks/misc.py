@@ -25,7 +25,8 @@ from pointcept.utils.cache import shared_dict
 from pointcept.utils.scheduler import CosineScheduler
 from pointcept.models.utils.structure import Point
 import pointcept.utils.comm as comm
-from pointcept.engines.test import TESTERS
+# Remove circular import - will use lazy import inside method instead
+# from pointcept.engines.test import TESTERS
 
 from .default import HookBase
 from .builder import HOOKS
@@ -258,6 +259,8 @@ class PreciseEvaluator(HookBase):
         )
         torch.cuda.empty_cache()
         cfg = self.trainer.cfg
+        # Lazy import TESTERS to avoid circular import
+        from pointcept.engines.test import TESTERS
         tester = TESTERS.build(
             dict(type=cfg.test.type, cfg=cfg, model=self.trainer.model)
         )
