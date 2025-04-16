@@ -103,10 +103,13 @@ def create_label(frame):
         frame, range_images, segmentation_labels, ri_index=1
     )
 
-    # point labels.
-    point_labels_all = np.concatenate(point_labels, axis=0)
-    point_labels_all_ri2 = np.concatenate(point_labels_ri2, axis=0)
-    point_labels_all = np.concatenate([point_labels_all, point_labels_all_ri2], axis=0)
+    combined_labels = [np.concatenate([point_labels[i], point_labels_ri2[i]], axis=0) for i in range(len(point_labels))]
+    point_labels_all = np.concatenate(combined_labels, axis=0)
+
+    # # point labels.
+    # point_labels_all = np.concatenate(point_labels, axis=0)
+    # point_labels_all_ri2 = np.concatenate(point_labels_ri2, axis=0)
+    # point_labels_all = np.concatenate([point_labels_all, point_labels_all_ri2], axis=0)
 
     labels = point_labels_all
     return labels
