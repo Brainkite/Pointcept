@@ -67,13 +67,19 @@ def create_lidar(frame):
 
     # Store number of points per lidar for both first and second returns
     points_per_lidar = np.array([
-        len(points[i]) + len(points_ri2[i]) for i in range(len(points))
+        len(points[i]) + len(points_ri2[i]) 
+        for i in range(len(points))
     ], dtype=np.uint32)
 
     # 3d points in vehicle frame.
-    points_all = np.concatenate(points, axis=0)
-    points_all_ri2 = np.concatenate(points_ri2, axis=0)
-    points_all = np.concatenate([points_all, points_all_ri2], axis=0)
+    assert len(points)==len(points_ri2)
+
+    combined_points = [np.concatenate([points[i], points_ri2[i]], axis=0) for i in range(len(points))]
+    points_all = np.concatenate(combined_points, axis=0)
+
+    # points_all = np.concatenate(points, axis=0)
+    # points_all_ri2 = np.concatenate(points_ri2, axis=0)
+    # points_all = np.concatenate([points_all, points_all_ri2], axis=0)
 
     velodyne = np.c_[points_all[:, 3:6], points_all[:, 1]]
     velodyne = velodyne.reshape((velodyne.shape[0] * velodyne.shape[1]))

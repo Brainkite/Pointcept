@@ -16,3 +16,6 @@ outputs/
 Dockerfile
 wandb/
 *.log
+.aider*
+tfrecords/
+**/*.ipynb
