@@ -19,3 +19,4 @@ wandb/
 .aider*
 tfrecords/
 **/*.ipynb
+waymo_raw
